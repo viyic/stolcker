@@ -66,7 +66,6 @@ struct AppState {
 const MAX_REQUEST_PER_DAY: i32 = 500;
 const INTERVAL: &str = "15min";
 
-// #[tokio::main]
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() == 1 {
@@ -96,16 +95,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .log_to_console()
         .launch(app);
     Ok(())
-
-    // println!("{}", response);
-
-    // Ok(())
-    // let test = Test;
-    // println!("{:?}", test);
-    // let val: serde_json::Value = serde_json::from_str(json).unwrap();
-    // let comp = Complex { real: 3.3, imag: 7.2 };
-    // println!("Display:\t{}", comp);
-    // println!("Debug:\t\t{:?}", comp);
 }
 
 fn get_data(stock_name: &String, api_key: &String) -> String {
@@ -147,12 +136,120 @@ fn parse_response(response: String) -> Result<Stock, Box<dyn Error>> {
         }
         result.records.push(Record { time: records_keys[i].clone(), price: price });
     }
-    // println!("{:#?}", records_keys);
-    // println!("{:#?}", records_values);
 
-    // println!("{}", val["Meta Data"]["2. Symbol"].as_str()?);
-    // println!("{:?}", records.get("2023-03-24 20:00:00"));
     Ok(result)
+}
+
+fn ui_builder() -> impl Widget<AppState> {
+    // @todo: clock widget
+    let label = Label::new(|data: &AppState, _env: &druid::Env| format!("{} {} ({})", data.stock.time, data.stock.time_zone, data.stock.interval))
+        .padding(5.0)
+        .align_right();
+    let lbl_error = Label::new(|data: &AppState, _env: &druid::Env| "Error".to_string())
+        .padding(5.0);
+    let btn_go = button_check()
+        .on_click(|_, data: &mut AppState, _| {
+            if !data.stock_name.is_empty() {
+                if data.stock_name != data.stock_name_prev {
+                    let result = parse_response(get_data(&data.stock_name, &data.api_key));
+                    match result {
+                        Ok(val) => {
+                            data.stock = val;
+                            data.valid = true;
+                        },
+                        Err(err) => {
+                            println!("Oops!");
+                            data.valid = false;
+                        },
+                    }
+                }
+            } else {
+                data.stock_name = data.stock_name_prev.clone();
+            }
+            data.stock_name_input = !data.stock_name_input;
+        });
+    let btn_cancel = button_x()
+        .on_click(|_, data: &mut AppState, _| {
+            if data.stock_name != data.stock_name_prev {
+                data.stock_name = data.stock_name_prev.clone();
+            }
+            data.stock_name_input = !data.stock_name_input;
+        });
+    let btn_change_stock_name = button_blue(|data: &AppState, _env: &druid::Env| data.stock_name.clone())
+        .on_click(|_, data: &mut AppState, _| {
+            if data.stock_name_prev != data.stock_name {
+                data.stock_name_prev = data.stock_name.clone();
+            }
+            data.stock_name_input = !data.stock_name_input;
+        });
+    let text_box_stock_name = TextBox::new()
+        .with_placeholder("Stock Name")
+        .with_text_alignment(druid::TextAlignment::Center)
+        .expand_height()
+        .padding(5.0)
+        .lens(AppState::stock_name);
+
+    Flex::column()
+        .with_child(
+            Either::new(
+                |data, _| data.stock_name_input,
+                Flex::row()
+                .with_flex_spacer(1.0)
+                .with_child(btn_change_stock_name)
+                .with_flex_child(label, 1.0)
+                ,
+                Flex::row()
+                .must_fill_main_axis(true)
+                .main_axis_alignment(druid::widget::MainAxisAlignment::Center)
+                .with_flex_child(btn_cancel.fix_width(50.0), 1.0)
+                .with_child(text_box_stock_name)
+                .with_flex_child(btn_go.fix_width(50.0), 1.0)
+                )
+            .fix_height(50.0)
+            )
+        .with_flex_child(
+            Flex::row()
+            .with_flex_child(
+                Either::new(
+                    |data, _| data.valid,
+                    Painter::new(|ctx, data: &AppState, env| {
+                        let bounds = ctx.size().to_rect();
+                        ctx.fill(bounds, &env.get(theme::BACKGROUND_LIGHT));
+
+                        let padding_y = 10.0;
+                        let height = bounds.y1 - padding_y * 2.0;
+                        let stock_height = (data.stock.highest - data.stock.lowest) as f64;
+                        let len = data.stock.records.len();
+                        for i in 0..len {
+                            let gap = bounds.x1 / len as f64;
+                            let x = (len - (i + 1)) as f64 * gap + gap / 2.0;
+                            {
+                                let x0 = x - 3.0;
+                                let x1 = x + 3.0;
+                                let mut y0 = (1.0 - (data.stock.records[i].price.open - data.stock.lowest) as f64 / stock_height) * height - 3.0;
+                                let mut y1 = (1.0 - (data.stock.records[i].price.close - data.stock.lowest) as f64 / stock_height) * height + 3.0;
+                                let mut color = Color::rgb8(0x11, 0xee, 0x11);
+                                if y1 > y0 {
+                                    color = Color::rgb8(0xee, 0x11, 0x11);
+                                    let temp = y1;
+                                    y1 = y0;
+                                    y0 = temp;
+                                }
+                                ctx.fill(druid::Rect::new(x0, y0 + padding_y, x1, y1 + padding_y), &color);
+                            }
+                            {
+                                let x0 = x - 1.0;
+                                let x1 = x + 1.0;
+                                let y0 = (1.0 - (data.stock.records[i].price.high - data.stock.lowest) as f64 / stock_height) * height - 3.0;
+                                let y1 = (1.0 - (data.stock.records[i].price.low - data.stock.lowest) as f64 / stock_height) * height + 3.0;
+                                ctx.fill(druid::Rect::new(x0, y0 + padding_y, x1, y1 + padding_y), &Color::rgb8(0, 0, 0));
+                            }
+                        }
+                    }),
+                    lbl_error
+                )
+            , 1.0)
+        , 1.0)
 }
 
 fn button_blue<T> (text: impl Into<druid::widget::LabelText<T>>) -> druid::widget::Container<T> where T: druid::Data {
@@ -241,119 +338,4 @@ fn button_x () -> impl Widget<AppState> {
                 ctx.stroke_styled(druid::piet::kurbo::Line::new(p0, p1), &Color::WHITE, stroke_size, &style);
             }
         }))
-}
-
-fn ui_builder() -> impl Widget<AppState> {
-    let label = Label::new(|data: &AppState, _env: &druid::Env| format!("{} {} ({})", data.stock.time, data.stock.time_zone, data.stock.interval))
-        .padding(5.0)
-        .align_right();
-    let lbl_error = Label::new(|data: &AppState, _env: &druid::Env| "Error".to_string())
-        .padding(5.0);
-    let btn_go = button_check()
-        .on_click(|_, data: &mut AppState, _| {
-            if !data.stock_name.is_empty() {
-                if data.stock_name != data.stock_name_prev {
-                    let result = parse_response(get_data(&data.stock_name, &data.api_key));
-                    match result {
-                        Ok(val) => {
-                            data.stock = val;
-                            data.valid = true;
-                        },
-                        Err(err) => {
-                            println!("Oops!");
-                            data.valid = false;
-                        },
-                    }
-                    // data.stock.update = true;
-                }
-            } else {
-                data.stock_name = data.stock_name_prev.clone();
-            }
-            data.stock_name_input = !data.stock_name_input;
-        });
-    let btn_cancel = button_x()
-        .on_click(|_, data: &mut AppState, _| {
-            if data.stock_name != data.stock_name_prev {
-                data.stock_name = data.stock_name_prev.clone();
-            }
-            data.stock_name_input = !data.stock_name_input;
-        });
-    let btn_change_stock_name = button_blue(|data: &AppState, _env: &druid::Env| data.stock_name.clone())
-        .on_click(|_, data: &mut AppState, _| {
-            if data.stock_name_prev != data.stock_name {
-                data.stock_name_prev = data.stock_name.clone();
-            }
-            data.stock_name_input = !data.stock_name_input;
-        });
-    let text_box_stock_name = TextBox::new()
-        .with_placeholder("Stock Name")
-        .with_text_alignment(druid::TextAlignment::Center)
-        .expand_height()
-        .padding(5.0)
-        .lens(AppState::stock_name);
-
-    Flex::column()
-        // .must_fill_main_axis(true)
-        // .cross_axis_alignment(druid::widget::CrossAxisAlignment::End)
-        .with_child(
-            Either::new(
-                |data, _| data.stock_name_input,
-                Flex::row()
-                .with_flex_spacer(1.0)
-                .with_child(btn_change_stock_name)
-                .with_flex_child(label, 1.0)
-                ,
-                Flex::row()
-                .must_fill_main_axis(true)
-                .main_axis_alignment(druid::widget::MainAxisAlignment::Center)
-                .with_flex_child(btn_cancel.fix_width(50.0), 1.0)
-                .with_child(text_box_stock_name)
-                .with_flex_child(btn_go.fix_width(50.0), 1.0)
-                )
-            .fix_height(50.0)
-            )
-        .with_flex_child(
-            Flex::row()
-            .with_flex_child(
-                Either::new(
-                    |data, _| data.valid,
-                    Painter::new(|ctx, data: &AppState, env| {
-                        let bounds = ctx.size().to_rect();
-                        ctx.fill(bounds, &env.get(theme::BACKGROUND_LIGHT));
-
-                        let padding_y = 10.0;
-                        let height = bounds.y1 - padding_y * 2.0;
-                        let stock_height = (data.stock.highest - data.stock.lowest) as f64;
-                        let len = data.stock.records.len();
-                        for i in 0..len {
-                            let gap = bounds.x1 / len as f64;
-                            let x = (len - (i + 1)) as f64 * gap + gap / 2.0;
-                            {
-                                let x0 = x - 3.0;
-                                let x1 = x + 3.0;
-                                let mut y0 = (1.0 - (data.stock.records[i].price.open - data.stock.lowest) as f64 / stock_height) * height - 3.0;
-                                let mut y1 = (1.0 - (data.stock.records[i].price.close - data.stock.lowest) as f64 / stock_height) * height + 3.0;
-                                let mut color = Color::rgb8(0x11, 0xee, 0x11);
-                                if y1 > y0 {
-                                    color = Color::rgb8(0xee, 0x11, 0x11);
-                                    let temp = y1;
-                                    y1 = y0;
-                                    y0 = temp;
-                                }
-                                ctx.fill(druid::Rect::new(x0, y0 + padding_y, x1, y1 + padding_y), &color);
-                            }
-                            {
-                                let x0 = x - 1.0;
-                                let x1 = x + 1.0;
-                                let y0 = (1.0 - (data.stock.records[i].price.high - data.stock.lowest) as f64 / stock_height) * height - 3.0;
-                                let y1 = (1.0 - (data.stock.records[i].price.low - data.stock.lowest) as f64 / stock_height) * height + 3.0;
-                                ctx.fill(druid::Rect::new(x0, y0 + padding_y, x1, y1 + padding_y), &Color::rgb8(0, 0, 0));
-                            }
-                            // ctx.draw_text(data.stock.records[i].time.clone(), druid::Point { x, y: bounds.y1 });
-                        }
-                    }),
-                    lbl_error
-                )
-            , 1.0)
-        , 1.0)
 }
